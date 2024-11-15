@@ -17,7 +17,8 @@ class BBTrajectory:
 
     def calculate_drag_force(self, velocity):
         velocity_magnitude = np.linalg.norm(velocity)
-        drag_magnitude = 0.5 * self.air_density * self.drag_coefficient * self.area * velocity_magnitude**2
+        C = 0.5 * self.air_density * self.drag_coefficient * self.area
+        drag_magnitude = C * velocity_magnitude**2
         return -drag_magnitude * velocity / velocity_magnitude if velocity_magnitude > 0 else np.zeros(3)
 
     def calculate_magnus_force(self, velocity):
@@ -25,16 +26,11 @@ class BBTrajectory:
         if (velocity_magnitude == 0):
             return np.zeros(3)
         
-        # Enhanced Magnus effect calculation
-        spin_angular_velocity = self.spin_rate  # rad/s
-        
-        # Calculate lift using enhanced coefficient
+        C = 0.5 * self.air_density * self.area
+        spin_angular_velocity = self.spin_rate
         lift_coefficient = self.magnus_coefficient * (spin_angular_velocity * self.diameter) / (2 * velocity_magnitude)
+        lift_force_magnitude = C * velocity_magnitude**2 * lift_coefficient
         
-        # Calculate lift force magnitude
-        lift_force_magnitude = 0.5 * self.air_density * velocity_magnitude**2 * self.area * lift_coefficient
-        
-        # Direction of lift force (perpendicular to both velocity and spin axis)
         velocity_normalized = velocity / velocity_magnitude
         spin_axis = np.array([0, 1, 0])  # Y-axis rotation for backspin
         lift_direction = np.cross(velocity_normalized, spin_axis)
@@ -42,54 +38,41 @@ class BBTrajectory:
         if np.linalg.norm(lift_direction) > 0:
             lift_direction = lift_direction / np.linalg.norm(lift_direction)
         
-        # Final Magnus force
-        magnus_force = lift_force_magnitude * lift_direction  # Removed amplification
-        
-        return magnus_force
+        return lift_force_magnitude * lift_direction
 
     def simulate_trajectory(self, dt=0.001, max_time=None):
-        # Calculate a reasonable max_time based on initial conditions if not provided
         if max_time is None:
-            # Estimate time using simple projectile motion as upper bound
             v0_y = 0  # Initial vertical velocity
             h0 = 1.5  # Initial height
-            # Time to hit ground in vacuum (overestimate): t = (-v0 + sqrt(v0^2 + 2gh0))/g
             max_time = (-v0_y + np.sqrt(v0_y**2 + 2*self.g*h0))/self.g
-            # Add 50% margin and account for horizontal distance
             max_time = max_time * 10 * (1 + np.linalg.norm(self.initial_velocity)/50)
         
         times = np.arange(0, max_time, dt)
         positions = np.zeros((len(times), 3))
         velocities = np.zeros((len(times), 3))
         
-        # Initial conditions
         positions[0] = np.array([0, 0, 1.5])
         velocities[0] = self.initial_velocity
         
         for i in range(1, len(times)):
-            # Apply spin decay as %/sec
             decay_fraction = self.spin_decay_rate / 100.0  # Convert % to fraction
             self.spin_rate = max(self.spin_rate * (1 - decay_fraction * dt), 0)
             
-            # Calculate forces
             gravity_force = np.array([0, 0, -self.g * self.mass])
             drag_force = self.calculate_drag_force(velocities[i-1])
             magnus_force = self.calculate_magnus_force(velocities[i-1])
+            friction_force = -self.f * velocities[i-1] if hasattr(self, 'f') else np.zeros(3)
             
-            # Sum forces and calculate acceleration
-            total_force = gravity_force + drag_force + magnus_force
+            total_force = gravity_force + drag_force + magnus_force + friction_force
             acceleration = total_force / self.mass
             
-            # Update velocity and position
             velocities[i] = velocities[i-1] + acceleration * dt
             positions[i] = positions[i-1] + velocities[i-1] * dt
             
-            # Stop if BB hits ground and interpolate final position
             if positions[i, 2] < 0:
-                # Interpolate to find exact ground intersection
                 t_ground = times[i-1] - positions[i-1, 2] * dt / (positions[i, 2] - positions[i-1, 2])
                 positions[i, :] = positions[i-1, :] + velocities[i-1, :] * (t_ground - times[i-1])
-                positions[i, 2] = 0  # Set exact ground height
+                positions[i, 2] = 0
                 return times[:i+1], positions[:i+1]
         
         return times, positions
@@ -109,86 +92,95 @@ def plot_trajectories(trajectories, labels):
     plt.show()
 
 def plot_interactive_trajectories(bb_diameter):
-    # Set dark mode style
     plt.style.use('dark_background')
     
-    # Create figure with space for sliders
-    fig = plt.figure(figsize=(12, 8), facecolor='#1C1C1C')
-    plot_ax = plt.axes([0.1, 0.3, 0.8, 0.4], facecolor='#2F2F2F')
+    # Create figure with larger plot area
+    fig = plt.figure(figsize=(14, 10), facecolor='#1C1C1C')
     
-    # Reserve space for colorbar
-    cbar_ax = fig.add_axes([0.92, 0.2, 0.02, 0.7])
+    # Main trajectory plot
+    plot_ax = plt.axes([0.1, 0.25, 0.8, 0.5], facecolor='#2F2F2F')
     
-    # Add a new axes for speed over distance
-    speed_ax = fig.add_axes([0.1, 0.75, 0.2, 0.2], facecolor='#2F2F2F', sharex=plot_ax)
+    # Speed plot moved to right side
+    speed_ax = fig.add_axes([0.1, 0.8, 0.4, 0.15], facecolor='#2F2F2F')
     
-    # Available BB weights in grams
+    # Colorbar
+    cbar_ax = fig.add_axes([0.92, 0.25, 0.02, 0.5])
+    
+    # Section titles
+    fig.text(0.1, 0.18, 'BB Properties', color='white', fontsize=12, fontweight='bold')
+    fig.text(0.5, 0.18, 'Target Settings', color='white', fontsize=12, fontweight='bold')
+    fig.text(0.1, 0.08, 'Spin Settings', color='white', fontsize=12, fontweight='bold')
+    
+    # BB Properties sliders (left column)
     bb_weights = [0.20, 0.23, 0.25, 0.28, 0.30, 0.32, 0.36, 0.40, 0.43, 0.46]
     
-    # Energy slider instead of velocity slider (typical airsoft energies: 0.5J to 3J)
-    energy_slider_ax = plt.axes([0.1, 0.05, 0.3, 0.03])
-    energy_slider = Slider(energy_slider_ax, 'Energy (Joules)', 0.1, 3.0, 
-                         valinit=1.0, valstep=0.1)
+    # Define weight_format function before using it
+    def weight_format(val):
+        return f'{bb_weights[int(val)]}g'
     
-    spin_slider_ax = plt.axes([0.1, 0.1, 0.3, 0.03])
-    weight_slider_ax = plt.axes([0.1, 0.15, 0.3, 0.03])
+    energy_slider_ax = plt.axes([0.1, 0.15, 0.25, 0.02])
+    weight_slider_ax = plt.axes([0.1, 0.12, 0.25, 0.02])
     
-    spin_slider = Slider(spin_slider_ax, 'Spin Rate (rpm)', 0, 200000, valinit=120000, valstep=1000)
-    weight_slider = Slider(weight_slider_ax, 'BB Weight (g)', 0, len(bb_weights)-1, 
-                         valinit=2, valstep=1, valfmt='%1.2fg')
+    # Target settings sliders (middle column)
+    target_slider_ax = plt.axes([0.5, 0.15, 0.25, 0.02])
+    
+    # Spin settings sliders (bottom row)
+    spin_slider_ax = plt.axes([0.1, 0.05, 0.25, 0.02])
+    spin_decay_slider_ax = plt.axes([0.1, 0.02, 0.25, 0.02])
+    
+    # Create sliders with improved styling
+    slider_kwargs = {
+        'color': '#4A90E2',
+        'initcolor': 'none',
+        'track_color': '#404040'
+    }
+    
+    energy_slider = Slider(energy_slider_ax, 'Energy (J)', 0.1, 3.0, valinit=1.0, valstep=0.1, **slider_kwargs)
+    weight_slider = Slider(weight_slider_ax, 'Weight (g)', 0, len(bb_weights)-1, valinit=2, **slider_kwargs)
+    target_slider = Slider(target_slider_ax, 'Target (m)', 1, 100, valinit=30, **slider_kwargs)
+    spin_slider = Slider(spin_slider_ax, 'Spin (rpm)', 0, 200000, valinit=120000, **slider_kwargs)
+    spin_decay_slider = Slider(spin_decay_slider_ax, 'Decay (%/s)', 0, 10, valinit=3.3, valstep=0.1, **slider_kwargs)
+    
+    # TextBox styling
+    textbox_style = {'color': '#2F2F2F', 'hovercolor': '#404040'}
+    
+    # Create textboxes aligned with sliders
+    energy_textbox = TextBox(plt.axes([0.37, 0.15, 0.08, 0.02]), '', initial=str(energy_slider.val), **textbox_style)
+    weight_textbox = TextBox(plt.axes([0.37, 0.12, 0.08, 0.02]), '', initial=weight_format(weight_slider.val), **textbox_style)
+    target_textbox = TextBox(plt.axes([0.77, 0.15, 0.08, 0.02]), '', initial=str(target_slider.val), **textbox_style)
+    spin_textbox = TextBox(plt.axes([0.37, 0.05, 0.08, 0.02]), '', initial=str(spin_slider.val), **textbox_style)
+    spin_decay_textbox = TextBox(plt.axes([0.37, 0.02, 0.08, 0.02]), '', initial=str(spin_decay_slider.val), **textbox_style)
+    
+    # Set text colors
+    for tb in [energy_textbox, weight_textbox, target_textbox, spin_textbox, spin_decay_textbox]:
+        tb.text_disp.set_color('white')
+    
+    # Add tooltips (hover text)
+    tooltips = {
+        energy_slider: 'BB muzzle energy in Joules',
+        weight_slider: 'BB weight in grams',
+        target_slider: 'Distance to target in meters',
+        spin_slider: 'BB spin rate in RPM',
+        spin_decay_slider: 'Spin decay rate in percent per second'
+    }
+    
+    def hover(event):
+        if event.inaxes in tooltips:
+            event.inaxes.set_title(tooltips[event.inaxes], color='white', pad=20, fontsize=10)
+            fig.canvas.draw_idle()
+    
+    fig.canvas.mpl_connect('motion_notify_event', hover)
     
     def weight_format(val):
         return f'{bb_weights[int(val)]}g'
     weight_slider.valtext.set_text(weight_format(2))
     
-    # Add target slider
-    target_slider_ax = plt.axes([0.5, 0.05, 0.3, 0.03])  # Position next to velocity slider
-    target_slider = Slider(target_slider_ax, 'Target Distance (m)', 1, 100, 
-                         valinit=30, valstep=1)
-    
-    # Add spin decay slider
-    spin_decay_slider_ax = plt.axes([0.1, 0.2, 0.3, 0.03])
-    spin_decay_slider = Slider(spin_decay_slider_ax, 'Spin Decay (%/sec)', 0, 10, 
-                               valinit=2, valstep=0.1)
-    
-    # Add TextBoxes for sliders
-    # Energy TextBox
-    energy_textbox_ax = plt.axes([0.42, 0.05, 0.1, 0.03])
-    energy_textbox = TextBox(energy_textbox_ax, 'Energy (J)', initial=str(energy_slider.val), 
-                             color='#2F2F2F', hovercolor='#555555')
-    energy_textbox.text_disp.set_color('white')  # Set input text color
-    
-    # Spin Rate TextBox
-    spin_textbox_ax = plt.axes([0.42, 0.1, 0.1, 0.03])
-    spin_textbox = TextBox(spin_textbox_ax, 'Spin (rpm)', initial=str(spin_slider.val), 
-                           color='#2F2F2F', hovercolor='#555555')
-    spin_textbox.text_disp.set_color('white')  # Set input text color
-    
-    # BB Weight TextBox
-    weight_textbox_ax = plt.axes([0.42, 0.15, 0.1, 0.03])
-    weight_textbox = TextBox(weight_textbox_ax, 'Weight (g)', initial=weight_format(weight_slider.val), 
-                             color='#2F2F2F', hovercolor='#555555')
-    weight_textbox.text_disp.set_color('white')  # Set input text color
-    
-    # Target Distance TextBox
-    target_textbox_ax = plt.axes([0.82, 0.05, 0.1, 0.03])
-    target_textbox = TextBox(target_textbox_ax, 'Target (m)', initial=str(target_slider.val), 
-                             color='#2F2F2F', hovercolor='#555555')
-    target_textbox.text_disp.set_color('white')  # Set input text color
-    
-    # Spin Decay TextBox
-    spin_decay_textbox_ax = plt.axes([0.42, 0.2, 0.1, 0.03])
-    spin_decay_textbox = TextBox(spin_decay_textbox_ax, 'Spin Decay (%/s)', initial=str(spin_decay_slider.val), 
-                                 color='#2F2F2F', hovercolor='#555555')
-    spin_decay_textbox.text_disp.set_color('white')  # Set input text color
-    
-    # Define callback functions to synchronize TextBoxes with Sliders
     def submit_energy(text):
         try:
             val = float(text)
             energy_slider.set_val(val)
         except ValueError:
-            pass  # Ignore invalid input
+            pass
     
     def submit_spin(text):
         try:
@@ -200,12 +192,11 @@ def plot_interactive_trajectories(bb_diameter):
     def submit_weight(text):
         try:
             val = float(text)
-            # Find the closest weight index
             closest_weight = min(bb_weights, key=lambda x: abs(x - val))
             idx = bb_weights.index(closest_weight)
             weight_slider.set_val(idx)
         except ValueError:
-            pass  # Ignore invalid input
+            pass
     
     def submit_target(text):
         try:
@@ -227,7 +218,6 @@ def plot_interactive_trajectories(bb_diameter):
     target_textbox.on_submit(submit_target)
     spin_decay_textbox.on_submit(submit_spin_decay)
     
-    # Update TextBoxes when Sliders are changed
     def update_textboxes(val):
         energy_textbox.set_val(f"{energy_slider.val:.1f}")
         spin_textbox.set_val(f"{spin_slider.val:.0f}")
@@ -235,7 +225,6 @@ def plot_interactive_trajectories(bb_diameter):
         target_textbox.set_val(f"{target_slider.val:.0f}")
         spin_decay_textbox.set_val(f"{spin_decay_slider.val:.1f}")
     
-    # Register the update_textboxes function to all slider events
     energy_slider.on_changed(update_textboxes)
     spin_slider.on_changed(update_textboxes)
     weight_slider.on_changed(update_textboxes)
@@ -243,22 +232,18 @@ def plot_interactive_trajectories(bb_diameter):
     spin_decay_slider.on_changed(update_textboxes)
     
     def format_coord(x, y):
-        # Find closest point on trajectory near the cursor, above or below
         if not hasattr(format_coord, 'positions') or not hasattr(format_coord, 'velocities'):
             return "No data"
         
-        # Define tolerances
         x_tolerance = 0.5  # meters
         y_tolerance = 0.5  # meters
         
-        # Filter points within x and y tolerance
         mask = (abs(format_coord.positions[:, 0] - x) < x_tolerance) & \
                (abs(format_coord.positions[:, 2] - y) < y_tolerance)
         
         if not np.any(mask):
             return "No trajectory data near cursor"
             
-        # Get valid positions and find closest point
         valid_positions = format_coord.positions[mask]
         valid_velocities = format_coord.velocities[mask]
         
@@ -279,13 +264,11 @@ def plot_interactive_trajectories(bb_diameter):
         speed_ax.clear()
         cbar_ax.clear()
         
-        # Get values from sliders
         energy_joules = energy_slider.val
         weight = bb_weights[int(weight_slider.val)]
         mass_kg = weight / 1000.0  # Convert g to kg
         spin_decay_rate = spin_decay_slider.val
         
-        # Calculate velocity from energy: E = 1/2 * m * v^2
         velocity_ms = np.sqrt((2 * energy_joules) / mass_kg)
         velocity_fps = velocity_ms / 0.3048  # Convert m/s to FPS
         
@@ -302,7 +285,6 @@ def plot_interactive_trajectories(bb_diameter):
         
         times, positions = bb.simulate_trajectory()
         
-        # Calculate velocities at each point
         velocities = np.zeros(len(positions))
         for i in range(len(positions)-1):
             dp = positions[i+1] - positions[i]
@@ -310,42 +292,69 @@ def plot_interactive_trajectories(bb_diameter):
             velocities[i] = np.linalg.norm(dp/dt)
         velocities[-1] = velocities[-2]
         
-        # Store positions and velocities for hover function
         format_coord.positions = positions
         format_coord.velocities = velocities
         
-        # Draw ground line and target line
         max_x = max(np.max(positions[:, 0]) * 1.1, target_distance * 1.1)
-        plot_ax.axhline(y=0, color='white', linestyle='-', alpha=0.3, zorder=0)
-        plot_ax.axvline(x=target_distance, color='red', linestyle='--', alpha=0.5, label='Target')
         
-        # Find time to target
+        # Draw optimal zone BEFORE the trajectory
+        start_height = 1.5  # meters
+        optimal_zone_height = 0.25  # 25cm in meters
+        optimal_zone_top = start_height + optimal_zone_height
+        optimal_zone_bottom = start_height - optimal_zone_height
+        min_distance = 10  # Start optimal zone at 10 meters
+        
+        # Draw the zone (only after min_distance)
+        plot_ax.axhspan(optimal_zone_bottom, optimal_zone_top,
+                       xmin=min_distance/max_x,  # Start shading at 10m
+                       color='green', alpha=0.2, zorder=1,
+                       label='Optimal Zone (±25cm)')
+        
+        # Calculate where trajectory is within optimal zone (only after min_distance)
+        mask_optimal = (positions[:, 2] <= optimal_zone_top) & \
+                      (positions[:, 2] >= optimal_zone_bottom) & \
+                      (positions[:, 0] >= min_distance)
+                      
+        if np.any(mask_optimal):
+            optimal_start = max(positions[mask_optimal][0][0], min_distance)  # Start at min_distance
+            optimal_end = positions[mask_optimal][-1][0]
+            optimal_length = optimal_end - optimal_start
+            
+            # Add text showing optimal zone length
+            plot_ax.text(optimal_start, optimal_zone_top + 0.1, 
+                        f'Optimal zone: {optimal_length:.1f}m (from {optimal_start:.1f}m to {optimal_end:.1f}m)', 
+                        color='white', fontsize=10, zorder=4)
+            
+            # Draw vertical lines at start and end of optimal zone
+            plot_ax.axvline(x=optimal_start, color='green', linestyle='--', alpha=0.5, zorder=2)
+            plot_ax.axvline(x=optimal_end, color='green', linestyle='--', alpha=0.5, zorder=2)
+        
+        # Ground line and target line with increased zorder
+        plot_ax.axhline(y=0, color='white', linestyle='-', alpha=0.3, zorder=2)
+        plot_ax.axvline(x=target_distance, color='red', linestyle='--', alpha=0.5, label='Target', zorder=2)
+        
         target_idx = np.argmin(np.abs(positions[:, 0] - target_distance))
         time_to_target = times[target_idx]
         target_height = positions[target_idx, 2]
         
-        # Add target marker
+        # Update scatter plots with higher zorder to appear above the optimal zone
         plot_ax.scatter(target_distance, target_height, 
-                       color='yellow', s=100, marker='*', 
+                       color='yellow', s=100, marker='*', zorder=3,
                        label=f'Time to target: {time_to_target:.3f}s\nHeight at target: {target_height:.2f}m')
         
-        # Create color-mapped line
         points = plot_ax.scatter(positions[:, 0], positions[:, 2], 
-                               c=velocities, cmap='plasma',  # Changed colormap
-                               s=1, label=f'{weight}g BB')
+                               c=velocities, cmap='plasma',
+                               s=1, label=f'{weight}g BB', zorder=3)
         
-        # Add impact point marker with distance in meters and feet
         plot_ax.scatter(positions[-1, 0], positions[-1, 2], 
-                       color='red', s=50, marker='x', 
+                       color='red', s=50, marker='x', zorder=3,
                        label=f'Impact: {positions[-1, 0]:.1f}m ({positions[-1, 0]*3.28084:.1f}ft)')
         
-        # Set axis limits and style
         plot_ax.set_xlim(0, max_x)
         speed_ax.set_xlim(0, max_x)
         plot_ax.set_ylim(-0.1, np.max(positions[:, 2]) * 1.1)
         plot_ax.set_facecolor('#2F2F2F')
         
-        # Add colorbar and labels with dark theme
         cbar = plt.colorbar(points, cax=cbar_ax)
         cbar_ax.set_ylabel('Velocity (m/s)', color='white')
         cbar.ax.yaxis.set_tick_params(color='white')
@@ -353,30 +362,26 @@ def plot_interactive_trajectories(bb_diameter):
         
         plot_ax.set_xlabel('Distance (m)', color='white')
         plot_ax.set_ylabel('Height (m)', color='white')
-        plot_ax.set_title(f'BB Trajectory (Energy: {energy_joules:.1f}J, Velocity: {velocity_fps:.0f} FPS = {velocity_ms:.1f} m/s)', 
-                         color='white', pad=10)
-        plot_ax.grid(True, alpha=0.2)
-        plot_ax.legend(facecolor='#2F2F2F', edgecolor='gray')
+        plot_ax.set_title(f'BB Trajectory Simulation\nEnergy: {energy_joules:.1f}J | {velocity_fps:.0f} FPS', 
+                         color='white', pad=20, fontsize=14)
+        plot_ax.grid(True, alpha=0.2, linestyle='--')
+        plot_ax.legend(facecolor='#2F2F2F', edgecolor='#404040', framealpha=0.9,
+                      title='Trajectory Info', title_fontsize=12)
         
-        # Add coordinate formatter for hover
         plot_ax.format_coord = format_coord
         
-        # Update tick colors
         plot_ax.tick_params(colors='white')
         
-        # Calculate cumulative distance traveled
         cumulative_distance = np.zeros(len(positions))
         cumulative_distance[1:] = np.cumsum(np.linalg.norm(np.diff(positions[:, :2], axis=0), axis=1))
         
-        # Calculate speeds
-        speeds = velocities  # Already calculated speeds
+        speeds = velocities
         
-        # Plot speed over traveled distance
         speed_ax.plot(cumulative_distance, speeds, color='cyan')
         speed_ax.set_xlabel('Traveled Distance (m)', color='white')
         speed_ax.set_ylabel('Speed (m/s)', color='white')
         speed_ax.set_title('Speed over Traveled Distance', color='white')
-        speed_ax.grid(True, alpha=0.2)
+        speed_ax.grid(True, alpha=0.2, linestyle='--')
         speed_ax.tick_params(colors='white')
         speed_ax.set_facecolor('#2F2F2F')
         
