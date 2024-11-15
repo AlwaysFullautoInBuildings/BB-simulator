@@ -143,17 +143,35 @@ def plot_interactive_trajectories(bb_diameter):
                          valinit=30, valstep=1)
     
     def format_coord(x, y):
-        # Find closest point on trajectory
+        # Find closest point on trajectory near the cursor, above or below
         if not hasattr(format_coord, 'positions') or not hasattr(format_coord, 'velocities'):
             return "No data"
         
-        distances = np.sqrt((format_coord.positions[:, 0] - x)**2 + 
-                          (format_coord.positions[:, 2] - y)**2)
+        # Define tolerances
+        x_tolerance = 0.5  # meters
+        y_tolerance = 0.5  # meters
+        
+        # Filter points within x and y tolerance
+        mask = (abs(format_coord.positions[:, 0] - x) < x_tolerance) & \
+               (abs(format_coord.positions[:, 2] - y) < y_tolerance)
+        
+        if not np.any(mask):
+            return "No trajectory data near cursor"
+            
+        # Get valid positions and find closest point
+        valid_positions = format_coord.positions[mask]
+        valid_velocities = format_coord.velocities[mask]
+        
+        distances = np.sqrt((valid_positions[:, 0] - x)**2 + 
+                            (valid_positions[:, 2] - y)**2)
         idx = np.argmin(distances)
-        if idx < len(format_coord.velocities):
-            vel_ms = format_coord.velocities[idx]
+        
+        if idx < len(valid_velocities):
+            vel_ms = valid_velocities[idx]
             vel_fps = vel_ms / 0.3048
-            return f'Distance: {x:.1f}m, Height: {y:.1f}m\nVelocity: {vel_fps:.0f} FPS ({vel_ms:.1f} m/s)'
+            pos_x = valid_positions[idx, 0]
+            pos_z = valid_positions[idx, 2]
+            return f'Distance: {pos_x:.1f}m, Height: {pos_z:.1f}m\nVelocity: {vel_fps:.0f} FPS ({vel_ms:.1f} m/s)'
         return "Out of range"
     
     def update(val):
