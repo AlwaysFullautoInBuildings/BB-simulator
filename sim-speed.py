@@ -94,187 +94,65 @@ def plot_trajectories(trajectories, labels):
     plt.show()
 
 def plot_interactive_trajectories(bb_diameter):
+    # Setup figure and axes
     plt.style.use('dark_background')
-    
-    # Create figure with larger plot area
     fig = plt.figure(figsize=(14, 10), facecolor='#1C1C1C')
-    
-    # Add status text in top-right corner
     status_text = fig.text(0.92, 0.95, '', color='white', fontsize=10)
     
-    # Main trajectory plot
+    # Create axes
     plot_ax = plt.axes([0.1, 0.25, 0.8, 0.5], facecolor='#2F2F2F')
-    
-    # Speed plot moved to right side
     speed_ax = fig.add_axes([0.1, 0.8, 0.4, 0.15], facecolor='#2F2F2F')
-    
-    # Colorbar
     cbar_ax = fig.add_axes([0.92, 0.25, 0.02, 0.5])
     
-    # Section titles
+    # Add section titles
     fig.text(0.1, 0.18, 'BB Properties', color='white', fontsize=12, fontweight='bold')
     fig.text(0.5, 0.18, 'Target Settings', color='white', fontsize=12, fontweight='bold')
     fig.text(0.1, 0.08, 'Spin Settings', color='white', fontsize=12, fontweight='bold')
     
-    # BB Properties sliders (left column)
+    # Slider setup helpers
+    def create_slider(ax, label, vmin, vmax, vinit, **kwargs):
+        slider_style = {
+            'color': '#4A90E2',
+            'initcolor': 'none',
+            'track_color': '#404040'
+        }
+        slider_style.update(kwargs)
+        return Slider(ax, label, vmin, vmax, valinit=vinit, **slider_style)
+
+    def create_textbox(ax, initial):
+        tb = TextBox(ax, '', initial=str(initial), color='#2F2F2F', hovercolor='#404040')
+        tb.text_disp.set_color('white')
+        return tb
+
+    # Create sliders and textboxes
     bb_weights = [0.20, 0.23, 0.25, 0.28, 0.30, 0.32, 0.36, 0.40, 0.43, 0.46]
     
-    # Define weight_format function before using it
-    def weight_format(val):
-        return f'{bb_weights[int(val)]}g'
-    
-    energy_slider_ax = plt.axes([0.1, 0.15, 0.25, 0.02])
-    weight_slider_ax = plt.axes([0.1, 0.12, 0.25, 0.02])
-    
-    # Target settings sliders (middle column)
-    target_slider_ax = plt.axes([0.5, 0.15, 0.25, 0.02])
-    
-    # Spin settings sliders (bottom row)
-    spin_slider_ax = plt.axes([0.1, 0.05, 0.25, 0.02])
-    spin_decay_slider_ax = plt.axes([0.1, 0.02, 0.25, 0.02])
-    
-    # Create sliders with improved styling
-    slider_kwargs = {
-        'color': '#4A90E2',
-        'initcolor': 'none',
-        'track_color': '#404040'
+    # Create all sliders with their axes
+    sliders = {
+        'energy': create_slider(plt.axes([0.1, 0.15, 0.25, 0.02]), 'Energy (J)', 0.1, 3.0, 1.0, valstep=0.1),
+        'weight': create_slider(plt.axes([0.1, 0.12, 0.25, 0.02]), 'Weight (g)', 0, len(bb_weights)-1, 3, valstep=1),
+        'target': create_slider(plt.axes([0.5, 0.15, 0.25, 0.02]), 'Target (m)', 1, 100, 30),
+        'spin': create_slider(plt.axes([0.1, 0.05, 0.25, 0.02]), 'Spin (rpm)', 0, 200000, 120000, valstep=1000),
+        'spin_decay': create_slider(plt.axes([0.1, 0.02, 0.25, 0.02]), 'Decay (%/s)', 0, 10, 3.3, valstep=0.1),
+        'tolerance': create_slider(plt.axes([0.5, 0.12, 0.25, 0.02]), 'BB Tolerance (mm)', 0.001, 0.05, 0.005, valstep=0.001),
+        'weight_tolerance': create_slider(plt.axes([0.5, 0.09, 0.25, 0.02]), 'Weight Tolerance (%)', 0.1, 5.0, 1.0, valstep=0.1)
     }
     
-    energy_slider = Slider(energy_slider_ax, 'Energy (J)', 0.1, 3.0, valinit=1.0, valstep=0.1, **slider_kwargs)
-    weight_slider = Slider(weight_slider_ax, 'Weight (g)', 0, len(bb_weights)-1, valinit=3, valstep=1, **slider_kwargs)  # Fixed range and added valstep=1
-    target_slider = Slider(target_slider_ax, 'Target (m)', 1, 100, valinit=30, **slider_kwargs)
-    spin_slider = Slider(spin_slider_ax, 'Spin (rpm)', 0, 200000, valinit=120000, valstep=1000, **slider_kwargs)
-    spin_decay_slider = Slider(spin_decay_slider_ax, 'Decay (%/s)', 0, 10, valinit=3.3, valstep=0.1, **slider_kwargs)
-    
-    # Add tolerance slider
-    tolerance_slider_ax = plt.axes([0.5, 0.12, 0.25, 0.02])
-    tolerance_slider = Slider(tolerance_slider_ax, 'BB Tolerance (mm)', 0.001, 0.05, valinit=0.005, valstep=0.001, **slider_kwargs)
-    
-    # Add weight tolerance slider next to size tolerance slider
-    weight_tolerance_slider_ax = plt.axes([0.5, 0.09, 0.25, 0.02])
-    weight_tolerance_slider = Slider(weight_tolerance_slider_ax, 'Weight Tolerance (%)', 0.1, 5.0, valinit=1.0, valstep=0.1, **slider_kwargs)
-    
-    # TextBox styling
-    textbox_style = {'color': '#2F2F2F', 'hovercolor': '#404040'}
-    
-    # Create textboxes aligned with sliders
-    energy_textbox = TextBox(plt.axes([0.37, 0.15, 0.08, 0.02]), '', initial=str(energy_slider.val), **textbox_style)
-    weight_textbox = TextBox(plt.axes([0.37, 0.12, 0.08, 0.02]), '', initial=weight_format(weight_slider.val), **textbox_style)
-    target_textbox = TextBox(plt.axes([0.77, 0.15, 0.08, 0.02]), '', initial=str(target_slider.val), **textbox_style)
-    tolerance_textbox = TextBox(plt.axes([0.77, 0.12, 0.08, 0.02]), '', initial=str(tolerance_slider.val), **textbox_style)
-    spin_textbox = TextBox(plt.axes([0.37, 0.05, 0.08, 0.02]), '', initial=str(spin_slider.val), **textbox_style)
-    spin_decay_textbox = TextBox(plt.axes([0.37, 0.02, 0.08, 0.02]), '', initial=str(spin_decay_slider.val), **textbox_style)
-    
-    # Add textbox for weight tolerance
-    weight_tolerance_textbox = TextBox(plt.axes([0.77, 0.09, 0.08, 0.02]), '', initial=str(weight_tolerance_slider.val), **textbox_style)
-    weight_tolerance_textbox.text_disp.set_color('white')
-    
-    # Set text colors
-    for tb in [energy_textbox, weight_textbox, target_textbox, spin_textbox, spin_decay_textbox, tolerance_textbox, weight_tolerance_textbox]:
-        tb.text_disp.set_color('white')
-    
-    # Add tooltips (hover text)
-    tooltips = {
-        energy_slider: 'BB muzzle energy in Joules',
-        weight_slider: 'BB weight in grams',
-        target_slider: 'Distance to target in meters',
-        spin_slider: 'BB spin rate in RPM',
-        spin_decay_slider: 'Spin decay rate in percent per second'
+    # Create corresponding textboxes
+    textboxes = {
+        'energy': create_textbox(plt.axes([0.37, 0.15, 0.08, 0.02]), sliders['energy'].val),
+        'weight': create_textbox(plt.axes([0.37, 0.12, 0.08, 0.02]), f"{bb_weights[int(sliders['weight'].val)]}g"),
+        'target': create_textbox(plt.axes([0.77, 0.15, 0.08, 0.02]), sliders['target'].val),
+        'spin': create_textbox(plt.axes([0.37, 0.05, 0.08, 0.02]), sliders['spin'].val),
+        'spin_decay': create_textbox(plt.axes([0.37, 0.02, 0.08, 0.02]), sliders['spin_decay'].val),
+        'tolerance': create_textbox(plt.axes([0.77, 0.12, 0.08, 0.02]), sliders['tolerance'].val),
+        'weight_tolerance': create_textbox(plt.axes([0.77, 0.09, 0.08, 0.02]), sliders['weight_tolerance'].val)
     }
-    
-    tooltips.update({
-        tolerance_slider: 'BB diameter tolerance in millimeters',
-        weight_tolerance_slider: 'BB weight variation in percent'
-    })
-    
-    def hover(event):
-        if event.inaxes in tooltips:
-            event.inaxes.set_title(tooltips[event.inaxes], color='white', pad=20, fontsize=10)
-            fig.canvas.draw_idle()
-    
-    fig.canvas.mpl_connect('motion_notify_event', hover)
-    
+
+    # Helper functions for format and update
     def weight_format(val):
         return f'{bb_weights[int(val)]}g'
-    weight_slider.valtext.set_text(weight_format(2))
-    
-    def submit_energy(text):
-        try:
-            val = float(text)
-            energy_slider.set_val(val)
-        except ValueError:
-            pass
-    
-    def submit_spin(text):
-        try:
-            val = float(text)
-            spin_slider.set_val(val)
-        except ValueError:
-            pass
-    
-    def submit_weight(text):
-        try:
-            val = float(text)
-            closest_weight = min(bb_weights, key=lambda x: abs(x - val))
-            idx = bb_weights.index(closest_weight)
-            weight_slider.set_val(idx)
-        except ValueError:
-            pass
-    
-    def submit_target(text):
-        try:
-            val = float(text)
-            target_slider.set_val(val)
-        except ValueError:
-            pass
-    
-    def submit_spin_decay(text):
-        try:
-            val = float(text)
-            spin_decay_slider.set_val(val)
-        except ValueError:
-            pass
-    
-    def submit_tolerance(text):
-        try:
-            val = float(text)
-            tolerance_slider.set_val(val)
-        except ValueError:
-            pass
-    
-    # Add submit function for weight tolerance
-    def submit_weight_tolerance(text):
-        try:
-            val = float(text)
-            weight_tolerance_slider.set_val(val)
-        except ValueError:
-            pass
-    
-    energy_textbox.on_submit(submit_energy)
-    spin_textbox.on_submit(submit_spin)
-    weight_textbox.on_submit(submit_weight)
-    target_textbox.on_submit(submit_target)
-    spin_decay_textbox.on_submit(submit_spin_decay)
-    tolerance_textbox.on_submit(submit_tolerance)
-    weight_tolerance_textbox.on_submit(submit_weight_tolerance)
-    
-    def update_textboxes(val):
-        energy_textbox.set_val(f"{energy_slider.val:.1f}")
-        spin_textbox.set_val(f"{spin_slider.val:.0f}")
-        weight_textbox.set_val(weight_format(weight_slider.val))
-        target_textbox.set_val(f"{target_slider.val:.0f}")
-        spin_decay_textbox.set_val(f"{spin_decay_slider.val:.1f}")
-        tolerance_textbox.set_val(f"{tolerance_slider.val:.3f}")
-        weight_tolerance_textbox.set_val(f"{weight_tolerance_slider.val:.1f}")
-    
-    energy_slider.on_changed(update_textboxes)
-    spin_slider.on_changed(update_textboxes)
-    weight_slider.on_changed(update_textboxes)
-    target_slider.on_changed(update_textboxes)
-    spin_decay_slider.on_changed(update_textboxes)
-    tolerance_slider.on_changed(update_textboxes)
-    weight_tolerance_slider.on_changed(update_textboxes)
-    
+
     def format_coord(x, y):
         if not hasattr(format_coord, 'positions') or not hasattr(format_coord, 'velocities'):
             return "No data"
@@ -366,20 +244,20 @@ def plot_interactive_trajectories(bb_diameter):
         speed_ax.clear()
         cbar_ax.clear()
         
-        energy_joules = energy_slider.val
-        weight = bb_weights[int(weight_slider.val)]
+        energy_joules = sliders['energy'].val
+        weight = bb_weights[int(sliders['weight'].val)]
         mass_kg = weight / 1000.0
-        spin_decay_rate = spin_decay_slider.val
-        spin_rate = spin_slider.val
-        target_distance = target_slider.val
+        spin_decay_rate = sliders['spin_decay'].val
+        spin_rate = sliders['spin'].val
+        target_distance = sliders['target'].val
         
         # Calculate initial velocity in m/s and fps
         initial_velocity_ms = np.sqrt((2 * energy_joules) / mass_kg)
         initial_velocity_fps = initial_velocity_ms * 3.28084  # Convert to FPS
 
         # Calculate extremes for combined tolerance
-        tolerance = tolerance_slider.val
-        weight_tol = weight_tolerance_slider.val / 100.0
+        tolerance = sliders['tolerance'].val
+        weight_tol = sliders['weight_tolerance'].val / 100.0
 
         # Calculate all extreme combinations
         diameter_vars = [bb_diameter - tolerance, bb_diameter + tolerance]
@@ -444,7 +322,7 @@ def plot_interactive_trajectories(bb_diameter):
         # Plot interpolated tolerance envelope
         plot_ax.fill_between(x_interp, min_traj_interp, max_traj_interp,
                            color='gray', alpha=0.2,
-                           label=f'Tolerance (±{tolerance:.3f}mm, ±{weight_tolerance_slider.val:.1f}%)')
+                           label=f'Tolerance (±{tolerance:.3f}mm, ±{sliders['weight_tolerance'].val:.1f}%)')
 
         # Use nominal trajectory for main calculations
         times, positions = times_nominal, positions_nominal
@@ -570,7 +448,7 @@ def plot_interactive_trajectories(bb_diameter):
         speed_ax.tick_params(colors='white')
         speed_ax.set_facecolor('#2F2F2F')
         
-        weight_slider.valtext.set_text(weight_format(weight_slider.val))
+        textboxes['weight'].set_val(weight_format(sliders['weight'].val))
         
         fig.canvas.draw_idle()
     
@@ -578,15 +456,11 @@ def plot_interactive_trajectories(bb_diameter):
     status_text.set_text('Ready')
     status_text.set_color('lime')
     
-    energy_slider.on_changed(update)
-    spin_slider.on_changed(update)
-    weight_slider.on_changed(update)
-    target_slider.on_changed(update)
-    spin_decay_slider.on_changed(update)
-    tolerance_slider.on_changed(update)
-    weight_tolerance_slider.on_changed(update)
-    
-    update(None)  # Initial plot
+    for slider in sliders.values():
+        slider.on_changed(update)
+
+    # Initial plot
+    update(None)
     plt.show()
 
 def main():
