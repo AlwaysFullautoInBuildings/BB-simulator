@@ -398,7 +398,7 @@ def plot_interactive_trajectories(bb_diameter):
     plt.show()
 
 def main():
-    bb_diameter = 6  # 6mm BB
+    bb_diameter = 5.95  # 6mm BB
     plot_interactive_trajectories(bb_diameter)
 
 if __name__ == "__main__":
