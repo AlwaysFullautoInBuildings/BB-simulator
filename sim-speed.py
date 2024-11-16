@@ -150,6 +150,10 @@ def plot_interactive_trajectories(bb_diameter):
     tolerance_slider_ax = plt.axes([0.5, 0.12, 0.25, 0.02])
     tolerance_slider = Slider(tolerance_slider_ax, 'BB Tolerance (mm)', 0.001, 0.05, valinit=0.005, valstep=0.001, **slider_kwargs)
     
+    # Add weight tolerance slider next to size tolerance slider
+    weight_tolerance_slider_ax = plt.axes([0.5, 0.09, 0.25, 0.02])
+    weight_tolerance_slider = Slider(weight_tolerance_slider_ax, 'Weight Tolerance (%)', 0.1, 5.0, valinit=1.0, valstep=0.1, **slider_kwargs)
+    
     # TextBox styling
     textbox_style = {'color': '#2F2F2F', 'hovercolor': '#404040'}
     
@@ -161,8 +165,12 @@ def plot_interactive_trajectories(bb_diameter):
     spin_textbox = TextBox(plt.axes([0.37, 0.05, 0.08, 0.02]), '', initial=str(spin_slider.val), **textbox_style)
     spin_decay_textbox = TextBox(plt.axes([0.37, 0.02, 0.08, 0.02]), '', initial=str(spin_decay_slider.val), **textbox_style)
     
+    # Add textbox for weight tolerance
+    weight_tolerance_textbox = TextBox(plt.axes([0.77, 0.09, 0.08, 0.02]), '', initial=str(weight_tolerance_slider.val), **textbox_style)
+    weight_tolerance_textbox.text_disp.set_color('white')
+    
     # Set text colors
-    for tb in [energy_textbox, weight_textbox, target_textbox, spin_textbox, spin_decay_textbox, tolerance_textbox]:
+    for tb in [energy_textbox, weight_textbox, target_textbox, spin_textbox, spin_decay_textbox, tolerance_textbox, weight_tolerance_textbox]:
         tb.text_disp.set_color('white')
     
     # Add tooltips (hover text)
@@ -175,7 +183,8 @@ def plot_interactive_trajectories(bb_diameter):
     }
     
     tooltips.update({
-        tolerance_slider: 'BB diameter tolerance in millimeters'
+        tolerance_slider: 'BB diameter tolerance in millimeters',
+        weight_tolerance_slider: 'BB weight variation in percent'
     })
     
     def hover(event):
@@ -233,12 +242,21 @@ def plot_interactive_trajectories(bb_diameter):
         except ValueError:
             pass
     
+    # Add submit function for weight tolerance
+    def submit_weight_tolerance(text):
+        try:
+            val = float(text)
+            weight_tolerance_slider.set_val(val)
+        except ValueError:
+            pass
+    
     energy_textbox.on_submit(submit_energy)
     spin_textbox.on_submit(submit_spin)
     weight_textbox.on_submit(submit_weight)
     target_textbox.on_submit(submit_target)
     spin_decay_textbox.on_submit(submit_spin_decay)
     tolerance_textbox.on_submit(submit_tolerance)
+    weight_tolerance_textbox.on_submit(submit_weight_tolerance)
     
     def update_textboxes(val):
         energy_textbox.set_val(f"{energy_slider.val:.1f}")
@@ -247,6 +265,7 @@ def plot_interactive_trajectories(bb_diameter):
         target_textbox.set_val(f"{target_slider.val:.0f}")
         spin_decay_textbox.set_val(f"{spin_decay_slider.val:.1f}")
         tolerance_textbox.set_val(f"{tolerance_slider.val:.3f}")
+        weight_tolerance_textbox.set_val(f"{weight_tolerance_slider.val:.1f}")
     
     energy_slider.on_changed(update_textboxes)
     spin_slider.on_changed(update_textboxes)
@@ -254,34 +273,45 @@ def plot_interactive_trajectories(bb_diameter):
     target_slider.on_changed(update_textboxes)
     spin_decay_slider.on_changed(update_textboxes)
     tolerance_slider.on_changed(update_textboxes)
+    weight_tolerance_slider.on_changed(update_textboxes)
     
     def format_coord(x, y):
         if not hasattr(format_coord, 'positions') or not hasattr(format_coord, 'velocities'):
             return "No data"
         
+        # Find data at current x position
         x_tolerance = 0.5  # meters
-        y_tolerance = 0.5  # meters
         
-        mask = (abs(format_coord.positions[:, 0] - x) < x_tolerance) & \
-               (abs(format_coord.positions[:, 2] - y) < y_tolerance)
-        
-        if not np.any(mask):
-            return "No trajectory data near cursor"
+        # Find closest x position in trajectory data
+        distances_x = np.abs(format_coord.positions[:, 0] - x)
+        if np.min(distances_x) > x_tolerance:
+            return "No trajectory data at this distance"
             
-        valid_positions = format_coord.positions[mask]
-        valid_velocities = format_coord.velocities[mask]
+        idx = np.argmin(distances_x)
+        pos_x = format_coord.positions[idx, 0]
+        pos_z = format_coord.positions[idx, 2]
+        vel_ms = format_coord.velocities[idx]
+        vel_fps = vel_ms / 0.3048
         
-        distances = np.sqrt((valid_positions[:, 0] - x)**2 + 
-                            (valid_positions[:, 2] - y)**2)
-        idx = np.argmin(distances)
+        # Get tolerance info at this x position
+        if hasattr(format_coord, 'min_traj') and hasattr(format_coord, 'max_traj') and hasattr(format_coord, 'x_interp'):
+            min_height = np.interp(x, format_coord.x_interp, format_coord.min_traj)
+            max_height = np.interp(x, format_coord.x_interp, format_coord.max_traj)
+            tolerance_info = f'Spread at {pos_x:.1f}m: {min_height:.2f}m - {max_height:.2f}m'
+        else:
+            tolerance_info = ''
+            
+        # Calculate energies at this point
+        mass = format_coord.mass  # kg
+        kinetic_energy = 0.5 * mass * vel_ms**2  # Joules
+        potential_energy = mass * 9.81 * pos_z    # Joules
+        total_energy = kinetic_energy + potential_energy
         
-        if idx < len(valid_velocities):
-            vel_ms = valid_velocities[idx]
-            vel_fps = vel_ms / 0.3048
-            pos_x = valid_positions[idx, 0]
-            pos_z = valid_positions[idx, 2]
-            return f'Distance: {pos_x:.1f}m, Height: {pos_z:.1f}m\nVelocity: {vel_fps:.0f} FPS ({vel_ms:.1f} m/s)'
-        return "Out of range"
+        return (f'Distance: {pos_x:.1f}m, Height: {pos_z:.1f}m '
+                f'{tolerance_info}\n'
+                f'Velocity: {vel_fps:.0f} FPS ({vel_ms:.1f} m/s) '
+                f'Energy: {total_energy:.2f}J)'
+				)
 
     def debounce(wait):
         def decorator(fn):
@@ -330,7 +360,7 @@ def plot_interactive_trajectories(bb_diameter):
         bb = BBTrajectory(diameter=diameter, *args, **kwargs)
         return bb.simulate_trajectory()
 
-    @debounce(1.0)  # Reduced wait time to 1 second for better responsiveness
+    @debounce(1.0)
     def update(val):
         plot_ax.clear()
         speed_ax.clear()
@@ -347,32 +377,78 @@ def plot_interactive_trajectories(bb_diameter):
         initial_velocity_ms = np.sqrt((2 * energy_joules) / mass_kg)
         initial_velocity_fps = initial_velocity_ms * 3.28084  # Convert to FPS
 
-        # Calculate trajectories for different BB diameters
+        # Calculate extremes for combined tolerance
         tolerance = tolerance_slider.val
-        diameters = [bb_diameter - tolerance, bb_diameter, bb_diameter + tolerance]
-        trajectories = []
+        weight_tol = weight_tolerance_slider.val / 100.0
+
+        # Calculate all extreme combinations
+        diameter_vars = [bb_diameter - tolerance, bb_diameter + tolerance]
+        weight_vars = [weight * (1 - weight_tol), weight * (1 + weight_tol)]
         
-        for d in diameters:
-            bb = BBTrajectory(
-                mass=weight,
-                diameter=d,
-                initial_velocity=[initial_velocity_ms, 0, 0],
-                spin_rate=spin_rate,
-                spin_decay_rate=spin_decay_rate
-            )
-            times, positions = bb.simulate_trajectory()
-            trajectories.append((times, positions))
+        # Test all combinations of extremes to find true min/max
+        extreme_trajectories = []
+        for d in diameter_vars:
+            for w in weight_vars:
+                bb = BBTrajectory(
+                    mass=w,
+                    diameter=d,
+                    initial_velocity=[initial_velocity_ms, 0, 0],
+                    spin_rate=spin_rate,
+                    spin_decay_rate=spin_decay_rate
+                )
+                times, positions = bb.simulate_trajectory()
+                extreme_trajectories.append((times, positions))
         
-        # Plot tolerance bands first (in gray)
-        plot_ax.plot(trajectories[0][1][:, 0], trajectories[0][1][:, 2], 
-                    color='gray', alpha=0.3, linestyle='--', linewidth=1)
-        plot_ax.plot(trajectories[2][1][:, 0], trajectories[2][1][:, 2], 
-                    color='gray', alpha=0.3, linestyle='--', linewidth=1,
-                    label='±0.01mm tolerance')
+        # Calculate nominal trajectory
+        bb_nominal = BBTrajectory(
+            mass=weight,
+            diameter=bb_diameter,
+            initial_velocity=[initial_velocity_ms, 0, 0],
+            spin_rate=spin_rate,
+            spin_decay_rate=spin_decay_rate
+        )
+        times_nominal, positions_nominal = bb_nominal.simulate_trajectory()
         
-        # Use the middle trajectory (nominal diameter) for all other calculations
-        times, positions = trajectories[1]
+        # Find true min/max trajectories at each point and extend to ground
+        def extend_to_ground(positions):
+            # Find where trajectory hits ground (z=0)
+            ground_idx = np.where(positions[:, 2] <= 0)[0]
+            if len(ground_idx) > 0:
+                x_ground = positions[ground_idx[0], 0]
+                return x_ground
+            return positions[-1, 0]
+
+        # Get maximum x distance any trajectory reaches
+        max_distance = max(extend_to_ground(traj[1]) for traj in extreme_trajectories)
+        x_interp = np.linspace(0, max_distance, 1000)
         
+        # Interpolate all trajectories and clamp to ground
+        interpolated_heights = []
+        for times, positions in extreme_trajectories:
+            x_coords = positions[:, 0]
+            z_coords = positions[:, 2]
+            
+            # Extend last point to ground if needed
+            if z_coords[-1] > 0:
+                x_ground = np.interp(0, z_coords[::-1], x_coords[::-1])
+                x_coords = np.append(x_coords, x_ground)
+                z_coords = np.append(z_coords, 0)
+            
+            interp_heights = np.interp(x_interp, x_coords, z_coords, right=0)
+            interpolated_heights.append(interp_heights)
+        
+        # Find min and max at each point
+        min_traj_interp = np.min(interpolated_heights, axis=0)
+        max_traj_interp = np.max(interpolated_heights, axis=0)
+        
+        # Plot interpolated tolerance envelope
+        plot_ax.fill_between(x_interp, min_traj_interp, max_traj_interp,
+                           color='gray', alpha=0.2,
+                           label=f'Tolerance (±{tolerance:.3f}mm, ±{weight_tolerance_slider.val:.1f}%)')
+
+        # Use nominal trajectory for main calculations
+        times, positions = times_nominal, positions_nominal
+
         # Calculate velocities for the nominal trajectory
         velocities = np.zeros(len(positions))
         for i in range(len(positions)-1):
@@ -380,6 +456,16 @@ def plot_interactive_trajectories(bb_diameter):
             dt = times[i+1] - times[i]
             velocities[i] = np.linalg.norm(dp/dt)
         velocities[-1] = velocities[-2]
+        
+        # Store interpolated values for hover display
+        format_coord.min_traj = min_traj_interp
+        format_coord.max_traj = max_traj_interp
+        format_coord.x_interp = x_interp
+        
+        # Store values needed for energy calculations
+        format_coord.mass = mass_kg
+        format_coord.positions = positions
+        format_coord.velocities = velocities
         
         # ...rest of existing code until title...
         
@@ -498,6 +584,7 @@ def plot_interactive_trajectories(bb_diameter):
     target_slider.on_changed(update)
     spin_decay_slider.on_changed(update)
     tolerance_slider.on_changed(update)
+    weight_tolerance_slider.on_changed(update)
     
     update(None)  # Initial plot
     plt.show()
