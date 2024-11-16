@@ -17,11 +17,39 @@ class BBTrajectory:
         self.air_density = 1.225  # kg/m³
         self.spin_decay_rate = spin_decay_rate  # Spin decay rate in rpm/s
 
+        # Add temperature and pressure effects
+        self.temperature = 20.0  # Celsius
+        self.pressure = 101325  # Pascal (sea level)
+        self.air_density = self.calculate_air_density()
+        
+        # Add crosswind effects
+        self.wind_velocity = np.array([0.0, 0.0, 0.0])  # m/s in x,y,z directions
+        
+        # Add humidity effect
+        self.humidity = 0.5  # 50% relative humidity
+
+    def calculate_air_density(self):
+        # Calculate air density based on temperature and pressure
+        R = 287.05  # Specific gas constant for dry air
+        T = self.temperature + 273.15  # Convert to Kelvin
+        return self.pressure / (R * T)
+
     def calculate_drag_force(self, velocity):
-        velocity_magnitude = np.linalg.norm(velocity)
+        # Account for wind in drag calculations
+        relative_velocity = velocity - self.wind_velocity
+        velocity_magnitude = np.linalg.norm(relative_velocity)
+        
+        # Reynolds number calculation
+        kinematic_viscosity = 1.5e-5  # m²/s for air at 20°C
+        reynolds = velocity_magnitude * self.diameter / kinematic_viscosity
+        
+        # Adjust drag coefficient based on Reynolds number
+        if reynolds < 5e4:  # Laminar flow
+            self.drag_coefficient = 24.0/reynolds + 6.0/(1.0 + np.sqrt(reynolds)) + 0.4
+        
         C = 0.5 * self.air_density * self.drag_coefficient * self.area
         drag_magnitude = C * velocity_magnitude**2
-        return -drag_magnitude * velocity / velocity_magnitude if velocity_magnitude > 0 else np.zeros(3)
+        return -drag_magnitude * relative_velocity / velocity_magnitude if velocity_magnitude > 0 else np.zeros(3)
 
     def calculate_magnus_force(self, velocity):
         velocity_magnitude = np.linalg.norm(velocity)
@@ -65,7 +93,15 @@ class BBTrajectory:
             magnus_force = self.calculate_magnus_force(velocities[i-1])
             friction_force = -self.f * velocities[i-1] if hasattr(self, 'f') else np.zeros(3)
             
-            total_force = gravity_force + drag_force + magnus_force + friction_force
+            # Add Coriolis effect (for very long range shots)
+            latitude = np.radians(45)  # Example latitude
+            omega_earth = 7.2921e-5  # Earth's angular velocity
+            coriolis_force = -2 * self.mass * np.cross(
+                np.array([0, omega_earth * np.cos(latitude), omega_earth * np.sin(latitude)]),
+                velocities[i-1]
+            )
+            
+            total_force = gravity_force + drag_force + magnus_force + friction_force + coriolis_force
             acceleration = total_force / self.mass
             
             velocities[i] = velocities[i-1] + acceleration * dt
@@ -119,34 +155,17 @@ def plot_interactive_trajectories(bb_diameter):
         slider_style.update(kwargs)
         return Slider(ax, label, vmin, vmax, valinit=vinit, **slider_style)
 
-    def create_textbox(ax, initial):
-        tb = TextBox(ax, '', initial=str(initial), color='#2F2F2F', hovercolor='#404040')
-        tb.text_disp.set_color('white')
-        return tb
-
-    # Create sliders and textboxes
+    # Create sliders only (remove textboxes)
     bb_weights = [0.20, 0.23, 0.25, 0.28, 0.30, 0.32, 0.36, 0.40, 0.43, 0.46]
     
-    # Create all sliders with their axes
     sliders = {
-        'energy': create_slider(plt.axes([0.1, 0.15, 0.25, 0.02]), 'Energy (J)', 0.1, 3.0, 1.0, valstep=0.1),
-        'weight': create_slider(plt.axes([0.1, 0.12, 0.25, 0.02]), 'Weight (g)', 0, len(bb_weights)-1, 3, valstep=1),
-        'target': create_slider(plt.axes([0.5, 0.15, 0.25, 0.02]), 'Target (m)', 1, 100, 30),
-        'spin': create_slider(plt.axes([0.1, 0.05, 0.25, 0.02]), 'Spin (rpm)', 0, 200000, 120000, valstep=1000),
-        'spin_decay': create_slider(plt.axes([0.1, 0.02, 0.25, 0.02]), 'Decay (%/s)', 0, 10, 3.3, valstep=0.1),
-        'tolerance': create_slider(plt.axes([0.5, 0.12, 0.25, 0.02]), 'BB Tolerance (mm)', 0.001, 0.05, 0.005, valstep=0.001),
-        'weight_tolerance': create_slider(plt.axes([0.5, 0.09, 0.25, 0.02]), 'Weight Tolerance (%)', 0.1, 5.0, 1.0, valstep=0.1)
-    }
-    
-    # Create corresponding textboxes
-    textboxes = {
-        'energy': create_textbox(plt.axes([0.37, 0.15, 0.08, 0.02]), sliders['energy'].val),
-        'weight': create_textbox(plt.axes([0.37, 0.12, 0.08, 0.02]), f"{bb_weights[int(sliders['weight'].val)]}g"),
-        'target': create_textbox(plt.axes([0.77, 0.15, 0.08, 0.02]), sliders['target'].val),
-        'spin': create_textbox(plt.axes([0.37, 0.05, 0.08, 0.02]), sliders['spin'].val),
-        'spin_decay': create_textbox(plt.axes([0.37, 0.02, 0.08, 0.02]), sliders['spin_decay'].val),
-        'tolerance': create_textbox(plt.axes([0.77, 0.12, 0.08, 0.02]), sliders['tolerance'].val),
-        'weight_tolerance': create_textbox(plt.axes([0.77, 0.09, 0.08, 0.02]), sliders['weight_tolerance'].val)
+        'energy': create_slider(plt.axes([0.1, 0.15, 0.35, 0.02]), 'Energy (J)', 0.1, 3.0, 1.0, valstep=0.1),
+        'weight': create_slider(plt.axes([0.1, 0.11, 0.35, 0.02]), 'Weight (g)', 0, len(bb_weights)-1, 3, valstep=1),
+        'target': create_slider(plt.axes([0.6, 0.15, 0.35, 0.02]), 'Target (m)', 1, 100, 30),
+        'spin': create_slider(plt.axes([0.1, 0.05, 0.35, 0.02]), 'Spin (rpm)', 0, 200000, 120000, valstep=1000),
+        'spin_decay': create_slider(plt.axes([0.1, 0.01, 0.35, 0.02]), 'Decay (%/s)', 0, 10, 3.3, valstep=0.1),
+        'tolerance': create_slider(plt.axes([0.6, 0.11, 0.35, 0.02]), 'BB Tolerance (mm)', 0.001, 0.05, 0.005, valstep=0.001),
+        'weight_tolerance': create_slider(plt.axes([0.6, 0.07, 0.35, 0.02]), 'Weight Tolerance (%)', 0.1, 5.0, 1.0, valstep=0.1)
     }
 
     # Helper functions for format and update
@@ -240,9 +259,9 @@ def plot_interactive_trajectories(bb_diameter):
 
     @debounce(1.0)
     def update(val):
+        # Clear only the main plot and speed plot, not the colorbar
         plot_ax.clear()
         speed_ax.clear()
-        cbar_ax.clear()
         
         energy_joules = sliders['energy'].val
         weight = bb_weights[int(sliders['weight'].val)]
@@ -345,13 +364,10 @@ def plot_interactive_trajectories(bb_diameter):
         format_coord.positions = positions
         format_coord.velocities = velocities
         
-        # ...rest of existing code until title...
         
         plot_ax.set_title(f'BB Trajectory Simulation\nEnergy: {energy_joules:.1f}J | {initial_velocity_fps:.0f} FPS', 
                          color='white', pad=20, fontsize=14)
         
-        # ...rest of existing code...
-
         # Calculate velocity in FPS
         velocity_fps = velocities * 3.28084
         
@@ -418,10 +434,20 @@ def plot_interactive_trajectories(bb_diameter):
         plot_ax.set_ylim(-0.1, np.max(positions[:, 2]) * 1.1)
         plot_ax.set_facecolor('#2F2F2F')
         
-        cbar = plt.colorbar(points, cax=cbar_ax)
-        cbar_ax.set_ylabel('Velocity (m/s)', color='white')
-        cbar.ax.yaxis.set_tick_params(color='white')
-        plt.setp(plt.getp(cbar.ax.axes, 'yticklabels'), color='white')
+        # Update colorbar only if it doesn't exist or needs changing
+        if not hasattr(update, 'colorbar'):
+            points = plot_ax.scatter(positions[:, 0], positions[:, 2], 
+                                   c=velocities, cmap='plasma',
+                                   s=1, label=f'{weight}g BB', zorder=3)
+            update.colorbar = plt.colorbar(points, cax=cbar_ax)
+            update.colorbar.ax.set_ylabel('Velocity (m/s)', color='white')
+            update.colorbar.ax.yaxis.set_tick_params(color='white')
+            plt.setp(plt.getp(update.colorbar.ax.axes, 'yticklabels'), color='white')
+        else:
+            points = plot_ax.scatter(positions[:, 0], positions[:, 2], 
+                                   c=velocities, cmap='plasma',
+                                   s=1, label=f'{weight}g BB', zorder=3)
+            update.colorbar.update_normal(points)
         
         plot_ax.set_xlabel('Distance (m)', color='white')
         plot_ax.set_ylabel('Height (m)', color='white')
@@ -447,8 +473,6 @@ def plot_interactive_trajectories(bb_diameter):
         speed_ax.grid(True, alpha=0.2, linestyle='--')
         speed_ax.tick_params(colors='white')
         speed_ax.set_facecolor('#2F2F2F')
-        
-        textboxes['weight'].set_val(weight_format(sliders['weight'].val))
         
         fig.canvas.draw_idle()
     
