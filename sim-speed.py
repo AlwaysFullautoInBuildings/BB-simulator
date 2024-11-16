@@ -1,6 +1,8 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.widgets import Slider, TextBox
+import time
+from functools import wraps
 
 class BBTrajectory:
     def __init__(self, mass, diameter, initial_velocity, spin_rate, drag_coefficient=0.47, spin_decay_rate=0.0):
@@ -97,6 +99,9 @@ def plot_interactive_trajectories(bb_diameter):
     # Create figure with larger plot area
     fig = plt.figure(figsize=(14, 10), facecolor='#1C1C1C')
     
+    # Add status text in top-right corner
+    status_text = fig.text(0.92, 0.95, '', color='white', fontsize=10)
+    
     # Main trajectory plot
     plot_ax = plt.axes([0.1, 0.25, 0.8, 0.5], facecolor='#2F2F2F')
     
@@ -136,10 +141,14 @@ def plot_interactive_trajectories(bb_diameter):
     }
     
     energy_slider = Slider(energy_slider_ax, 'Energy (J)', 0.1, 3.0, valinit=1.0, valstep=0.1, **slider_kwargs)
-    weight_slider = Slider(weight_slider_ax, 'Weight (g)', 0, len(bb_weights)-1, valinit=2, **slider_kwargs)
+    weight_slider = Slider(weight_slider_ax, 'Weight (g)', 0, len(bb_weights)-1, valinit=3, valstep=1, **slider_kwargs)  # Fixed range and added valstep=1
     target_slider = Slider(target_slider_ax, 'Target (m)', 1, 100, valinit=30, **slider_kwargs)
-    spin_slider = Slider(spin_slider_ax, 'Spin (rpm)', 0, 200000, valinit=120000, **slider_kwargs)
+    spin_slider = Slider(spin_slider_ax, 'Spin (rpm)', 0, 200000, valinit=120000, valstep=1000, **slider_kwargs)
     spin_decay_slider = Slider(spin_decay_slider_ax, 'Decay (%/s)', 0, 10, valinit=3.3, valstep=0.1, **slider_kwargs)
+    
+    # Add tolerance slider
+    tolerance_slider_ax = plt.axes([0.5, 0.12, 0.25, 0.02])
+    tolerance_slider = Slider(tolerance_slider_ax, 'BB Tolerance (mm)', 0.001, 0.05, valinit=0.005, valstep=0.001, **slider_kwargs)
     
     # TextBox styling
     textbox_style = {'color': '#2F2F2F', 'hovercolor': '#404040'}
@@ -148,11 +157,12 @@ def plot_interactive_trajectories(bb_diameter):
     energy_textbox = TextBox(plt.axes([0.37, 0.15, 0.08, 0.02]), '', initial=str(energy_slider.val), **textbox_style)
     weight_textbox = TextBox(plt.axes([0.37, 0.12, 0.08, 0.02]), '', initial=weight_format(weight_slider.val), **textbox_style)
     target_textbox = TextBox(plt.axes([0.77, 0.15, 0.08, 0.02]), '', initial=str(target_slider.val), **textbox_style)
+    tolerance_textbox = TextBox(plt.axes([0.77, 0.12, 0.08, 0.02]), '', initial=str(tolerance_slider.val), **textbox_style)
     spin_textbox = TextBox(plt.axes([0.37, 0.05, 0.08, 0.02]), '', initial=str(spin_slider.val), **textbox_style)
     spin_decay_textbox = TextBox(plt.axes([0.37, 0.02, 0.08, 0.02]), '', initial=str(spin_decay_slider.val), **textbox_style)
     
     # Set text colors
-    for tb in [energy_textbox, weight_textbox, target_textbox, spin_textbox, spin_decay_textbox]:
+    for tb in [energy_textbox, weight_textbox, target_textbox, spin_textbox, spin_decay_textbox, tolerance_textbox]:
         tb.text_disp.set_color('white')
     
     # Add tooltips (hover text)
@@ -163,6 +173,10 @@ def plot_interactive_trajectories(bb_diameter):
         spin_slider: 'BB spin rate in RPM',
         spin_decay_slider: 'Spin decay rate in percent per second'
     }
+    
+    tooltips.update({
+        tolerance_slider: 'BB diameter tolerance in millimeters'
+    })
     
     def hover(event):
         if event.inaxes in tooltips:
@@ -212,11 +226,19 @@ def plot_interactive_trajectories(bb_diameter):
         except ValueError:
             pass
     
+    def submit_tolerance(text):
+        try:
+            val = float(text)
+            tolerance_slider.set_val(val)
+        except ValueError:
+            pass
+    
     energy_textbox.on_submit(submit_energy)
     spin_textbox.on_submit(submit_spin)
     weight_textbox.on_submit(submit_weight)
     target_textbox.on_submit(submit_target)
     spin_decay_textbox.on_submit(submit_spin_decay)
+    tolerance_textbox.on_submit(submit_tolerance)
     
     def update_textboxes(val):
         energy_textbox.set_val(f"{energy_slider.val:.1f}")
@@ -224,12 +246,14 @@ def plot_interactive_trajectories(bb_diameter):
         weight_textbox.set_val(weight_format(weight_slider.val))
         target_textbox.set_val(f"{target_slider.val:.0f}")
         spin_decay_textbox.set_val(f"{spin_decay_slider.val:.1f}")
+        tolerance_textbox.set_val(f"{tolerance_slider.val:.3f}")
     
     energy_slider.on_changed(update_textboxes)
     spin_slider.on_changed(update_textboxes)
     weight_slider.on_changed(update_textboxes)
     target_slider.on_changed(update_textboxes)
     spin_decay_slider.on_changed(update_textboxes)
+    tolerance_slider.on_changed(update_textboxes)
     
     def format_coord(x, y):
         if not hasattr(format_coord, 'positions') or not hasattr(format_coord, 'velocities'):
@@ -258,7 +282,55 @@ def plot_interactive_trajectories(bb_diameter):
             pos_z = valid_positions[idx, 2]
             return f'Distance: {pos_x:.1f}m, Height: {pos_z:.1f}m\nVelocity: {vel_fps:.0f} FPS ({vel_ms:.1f} m/s)'
         return "Out of range"
-    
+
+    def debounce(wait):
+        def decorator(fn):
+            last_called = [0]
+            timer = [None]
+            is_calculating = [False]
+            
+            @wraps(fn)
+            def debounced(*args, **kwargs):
+                def call_function():
+                    if is_calculating[0]:
+                        return
+                    is_calculating[0] = True
+                    status_text.set_text('Calculating...')
+                    status_text.set_color('yellow')
+                    fig.canvas.draw_idle()
+                    
+                    try:
+                        fn(*args, **kwargs)
+                    finally:
+                        is_calculating[0] = False
+                        status_text.set_text('Ready')
+                        status_text.set_color('lime')
+                        fig.canvas.draw_idle()
+                
+                last_called[0] = time.time()
+                
+                if timer[0]:
+                    timer[0].stop()
+                    timer[0] = None
+                
+                timer[0] = fig.canvas.new_timer(interval=wait*1000)
+                timer[0].add_callback(call_function)
+                timer[0].start()
+                
+                # Show calculating immediately when input changes
+                if not is_calculating[0]:
+                    status_text.set_text('Calculating...')
+                    status_text.set_color('yellow')
+                    fig.canvas.draw_idle()
+            
+            return debounced
+        return decorator
+
+    def calculate_trajectory_with_diameter(diameter, *args, **kwargs):
+        bb = BBTrajectory(diameter=diameter, *args, **kwargs)
+        return bb.simulate_trajectory()
+
+    @debounce(1.0)  # Reduced wait time to 1 second for better responsiveness
     def update(val):
         plot_ax.clear()
         speed_ax.clear()
@@ -266,31 +338,58 @@ def plot_interactive_trajectories(bb_diameter):
         
         energy_joules = energy_slider.val
         weight = bb_weights[int(weight_slider.val)]
-        mass_kg = weight / 1000.0  # Convert g to kg
+        mass_kg = weight / 1000.0
         spin_decay_rate = spin_decay_slider.val
-        
-        velocity_ms = np.sqrt((2 * energy_joules) / mass_kg)
-        velocity_fps = velocity_ms / 0.3048  # Convert m/s to FPS
-        
         spin_rate = spin_slider.val
         target_distance = target_slider.val
         
-        bb = BBTrajectory(
-            mass=weight,
-            diameter=bb_diameter,
-            initial_velocity=[velocity_ms, 0, 0],  # Use converted velocity
-            spin_rate=spin_rate,
-            spin_decay_rate=spin_decay_rate
-        )
+        # Calculate initial velocity in m/s and fps
+        initial_velocity_ms = np.sqrt((2 * energy_joules) / mass_kg)
+        initial_velocity_fps = initial_velocity_ms * 3.28084  # Convert to FPS
+
+        # Calculate trajectories for different BB diameters
+        tolerance = tolerance_slider.val
+        diameters = [bb_diameter - tolerance, bb_diameter, bb_diameter + tolerance]
+        trajectories = []
         
-        times, positions = bb.simulate_trajectory()
+        for d in diameters:
+            bb = BBTrajectory(
+                mass=weight,
+                diameter=d,
+                initial_velocity=[initial_velocity_ms, 0, 0],
+                spin_rate=spin_rate,
+                spin_decay_rate=spin_decay_rate
+            )
+            times, positions = bb.simulate_trajectory()
+            trajectories.append((times, positions))
         
+        # Plot tolerance bands first (in gray)
+        plot_ax.plot(trajectories[0][1][:, 0], trajectories[0][1][:, 2], 
+                    color='gray', alpha=0.3, linestyle='--', linewidth=1)
+        plot_ax.plot(trajectories[2][1][:, 0], trajectories[2][1][:, 2], 
+                    color='gray', alpha=0.3, linestyle='--', linewidth=1,
+                    label='±0.01mm tolerance')
+        
+        # Use the middle trajectory (nominal diameter) for all other calculations
+        times, positions = trajectories[1]
+        
+        # Calculate velocities for the nominal trajectory
         velocities = np.zeros(len(positions))
         for i in range(len(positions)-1):
             dp = positions[i+1] - positions[i]
             dt = times[i+1] - times[i]
             velocities[i] = np.linalg.norm(dp/dt)
         velocities[-1] = velocities[-2]
+        
+        # ...rest of existing code until title...
+        
+        plot_ax.set_title(f'BB Trajectory Simulation\nEnergy: {energy_joules:.1f}J | {initial_velocity_fps:.0f} FPS', 
+                         color='white', pad=20, fontsize=14)
+        
+        # ...rest of existing code...
+
+        # Calculate velocity in FPS
+        velocity_fps = velocities * 3.28084
         
         format_coord.positions = positions
         format_coord.velocities = velocities
@@ -362,7 +461,7 @@ def plot_interactive_trajectories(bb_diameter):
         
         plot_ax.set_xlabel('Distance (m)', color='white')
         plot_ax.set_ylabel('Height (m)', color='white')
-        plot_ax.set_title(f'BB Trajectory Simulation\nEnergy: {energy_joules:.1f}J | {velocity_fps:.0f} FPS', 
+        plot_ax.set_title(f'BB Trajectory Simulation\nEnergy: {energy_joules:.1f}J | {initial_velocity_fps:.0f} FPS', 
                          color='white', pad=20, fontsize=14)
         plot_ax.grid(True, alpha=0.2, linestyle='--')
         plot_ax.legend(facecolor='#2F2F2F', edgecolor='#404040', framealpha=0.9,
@@ -386,13 +485,19 @@ def plot_interactive_trajectories(bb_diameter):
         speed_ax.set_facecolor('#2F2F2F')
         
         weight_slider.valtext.set_text(weight_format(weight_slider.val))
+        
         fig.canvas.draw_idle()
+    
+    # Initialize status as ready
+    status_text.set_text('Ready')
+    status_text.set_color('lime')
     
     energy_slider.on_changed(update)
     spin_slider.on_changed(update)
     weight_slider.on_changed(update)
     target_slider.on_changed(update)
     spin_decay_slider.on_changed(update)
+    tolerance_slider.on_changed(update)
     
     update(None)  # Initial plot
     plt.show()
