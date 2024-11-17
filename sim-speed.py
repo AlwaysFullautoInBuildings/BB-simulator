@@ -3,6 +3,9 @@ import matplotlib.pyplot as plt
 from matplotlib.widgets import Slider, TextBox
 import time
 from functools import wraps
+import cProfile
+import pstats
+import csv  # Added to handle CSV file writing
 
 class BBTrajectory:
     def __init__(self, mass, diameter, initial_velocity, spin_rate, drag_coefficient=0.47, spin_decay_rate=0.0):
@@ -16,23 +19,15 @@ class BBTrajectory:
         self.g = 9.81  # Gravity acceleration
         self.air_density = 1.225  # kg/m³
         self.spin_decay_rate = spin_decay_rate  # Spin decay rate in rpm/s
-
-        # Add temperature and pressure effects
-        self.temperature = 20.0  # Celsius
-        self.pressure = 101325  # Pascal (sea level)
-        self.air_density = self.calculate_air_density()
         
         # Add crosswind effects
         self.wind_velocity = np.array([0.0, 0.0, 0.0])  # m/s in x,y,z directions
-        
-        # Add humidity effect
-        self.humidity = 0.5  # 50% relative humidity
 
-    def calculate_air_density(self):
-        # Calculate air density based on temperature and pressure
-        R = 287.05  # Specific gas constant for dry air
-        T = self.temperature + 273.15  # Convert to Kelvin
-        return self.pressure / (R * T)
+        # Pre-allocate vectors used in calculations
+        self._velocity = np.zeros(3)
+        self._position = np.zeros(3)
+        self._magnus_force = np.zeros(3)
+        self._drag_force = np.zeros(3)
 
     def calculate_drag_force(self, velocity):
         # Account for wind in drag calculations
@@ -115,19 +110,6 @@ class BBTrajectory:
         
         return times, positions
 
-def plot_trajectories(trajectories, labels):
-    plt.figure(figsize=(12, 6))
-    for traj, label in zip(trajectories, labels):
-        times, positions = traj
-        plt.plot(positions[:, 0], positions[:, 2], label=label)
-    
-    plt.xlabel('Distance (m)')
-    plt.ylabel('Height (m)')
-    plt.title('BB Trajectories')
-    plt.grid(True)
-    plt.legend()
-    plt.axis('equal')
-    plt.show()
 
 def plot_interactive_trajectories(bb_diameter):
     # Setup figure and axes
@@ -157,16 +139,26 @@ def plot_interactive_trajectories(bb_diameter):
 
     # Create sliders only (remove textboxes)
     bb_weights = [0.20, 0.23, 0.25, 0.28, 0.30, 0.32, 0.36, 0.40, 0.43, 0.46]
+    bb_start_weight = 3  # 0.28g
+    
+    def weight_format(val):
+        return f'{bb_weights[int(val)]}g'
     
     sliders = {
-        'energy': create_slider(plt.axes([0.1, 0.15, 0.35, 0.02]), 'Energy (J)', 0.1, 3.0, 1.0, valstep=0.1),
-        'weight': create_slider(plt.axes([0.1, 0.11, 0.35, 0.02]), 'Weight (g)', 0, len(bb_weights)-1, 3, valstep=1),
-        'target': create_slider(plt.axes([0.6, 0.15, 0.35, 0.02]), 'Target (m)', 1, 100, 30),
+        'energy': create_slider(plt.axes([0.1, 0.15, 0.35, 0.02]), 'Energy (J)', 0.1, 3.0, 1, valstep=0.1),
+        'weight': create_slider(plt.axes([0.1, 0.11, 0.35, 0.02]), 'Weight (g)', 0, len(bb_weights)-1, bb_start_weight, valstep=1),
+        'target': create_slider(plt.axes([0.6, 0.15, 0.35, 0.02]), 'Target (m)', 1, 100, 30, valstep=1),
         'spin': create_slider(plt.axes([0.1, 0.05, 0.35, 0.02]), 'Spin (rpm)', 0, 200000, 120000, valstep=1000),
         'spin_decay': create_slider(plt.axes([0.1, 0.01, 0.35, 0.02]), 'Decay (%/s)', 0, 10, 3.3, valstep=0.1),
         'tolerance': create_slider(plt.axes([0.6, 0.11, 0.35, 0.02]), 'BB Tolerance (mm)', 0.001, 0.05, 0.005, valstep=0.001),
-        'weight_tolerance': create_slider(plt.axes([0.6, 0.07, 0.35, 0.02]), 'Weight Tolerance (%)', 0.1, 5.0, 1.0, valstep=0.1)
+        'weight_tolerance': create_slider(plt.axes([0.6, 0.07, 0.35, 0.02]), 'Weight Tolerance (%)', 0.1, 5.0, 2.0, valstep=0.1)
     }
+
+    # Add a callback to update the weight display
+    def update_weight_text(val):
+        sliders['weight'].valtext.set_text(weight_format(val))
+    
+    sliders['weight'].on_changed(update_weight_text)
 
     # Helper functions for format and update
     def weight_format(val):
@@ -253,10 +245,6 @@ def plot_interactive_trajectories(bb_diameter):
             return debounced
         return decorator
 
-    def calculate_trajectory_with_diameter(diameter, *args, **kwargs):
-        bb = BBTrajectory(diameter=diameter, *args, **kwargs)
-        return bb.simulate_trajectory()
-
     @debounce(1.0)
     def update(val):
         # Clear only the main plot and speed plot, not the colorbar
@@ -341,7 +329,7 @@ def plot_interactive_trajectories(bb_diameter):
         # Plot interpolated tolerance envelope
         plot_ax.fill_between(x_interp, min_traj_interp, max_traj_interp,
                            color='gray', alpha=0.2,
-                           label=f'Tolerance (±{tolerance:.3f}mm, ±{sliders['weight_tolerance'].val:.1f}%)')
+                           label=f'Tolerance (±{tolerance:.3f}mm, ±{weight_tol:.1f}%)')
 
         # Use nominal trajectory for main calculations
         times, positions = times_nominal, positions_nominal
@@ -481,6 +469,7 @@ def plot_interactive_trajectories(bb_diameter):
     status_text.set_color('lime')
     
     for slider in sliders.values():
+        update_weight_text(bb_start_weight)
         slider.on_changed(update)
 
     # Initial plot
@@ -492,4 +481,22 @@ def main():
     plot_interactive_trajectories(bb_diameter)
 
 if __name__ == "__main__":
+    pr = cProfile.Profile()
+    pr.enable()
     main()
+    pr.disable()
+    
+    # Save profiler output to CSV instead of printing
+    with open('profile_log.csv', 'w', newline='') as csvfile:
+        writer = csv.writer(csvfile)
+        writer.writerow(['Function', 'Total Calls', 'Total Time', 'Per Call (Total)', 'Cumulative Time', 'Per Call (Cum)'])
+        ps = pstats.Stats(pr).sort_stats('cumulative')
+        
+        for func, stats in ps.stats.items():
+            filename, lineno, func_name = func
+            ncalls = stats[0]
+            tottime = stats[1]
+            cumtime = stats[2]
+            percall_tot = tottime / ncalls if ncalls else 0
+            percall_cum = cumtime / ncalls if ncalls else 0
+            writer.writerow([f"{func_name} ({filename}:{lineno})", ncalls, tottime, percall_tot, cumtime, percall_cum])
