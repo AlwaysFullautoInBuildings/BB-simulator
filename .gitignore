@@ -161,3 +161,4 @@ cython_debug/
 *.pdf
 resources/*
 !resources/.gitkeep
+profile_log.csv
