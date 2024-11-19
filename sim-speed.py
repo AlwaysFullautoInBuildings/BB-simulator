@@ -267,8 +267,8 @@ def plot_interactive_trajectories(bb_diameter):
         weight_tol = sliders['weight_tolerance'].val / 100.0
 
         # Calculate all extreme combinations
-        diameter_vars = [bb_diameter - tolerance, bb_diameter + tolerance]
-        weight_vars = [weight * (1 - weight_tol), weight * (1 + weight_tol)]
+        diameter_vars = [bb_diameter - tolerance, bb_diameter + tolerance, bb_diameter]
+        weight_vars = [weight * (1 - weight_tol), weight * (1 + weight_tol),weight]
         
         # Test all combinations of extremes to find true min/max
         extreme_trajectories = []
