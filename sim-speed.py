@@ -71,7 +71,7 @@ class BBTrajectory:
             h0 = 1.5  # Initial height
             max_time = (-v0_y + np.sqrt(v0_y**2 + 2*self.g*h0))/self.g
             max_time = max_time * 10 * (1 + np.linalg.norm(self.initial_velocity)/50)
-        
+        ##TODO: Add kinetic energy calculations
         times = np.arange(0, max_time, dt)
         positions = np.zeros((len(times), 3))
         velocities = np.zeros((len(times), 3))
@@ -192,6 +192,7 @@ def plot_interactive_trajectories(bb_diameter):
             
         # Calculate energies at this point
         mass = format_coord.mass  # kg
+        ## TODO: Add energy calculations to simulation
         kinetic_energy = 0.5 * mass * vel_ms**2  # Joules
         potential_energy = mass * 9.81 * pos_z    # Joules
         total_energy = kinetic_energy + potential_energy
